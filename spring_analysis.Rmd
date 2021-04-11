@@ -1,0 +1,105 @@
+---
+title: "Spring analysis"
+params:
+  project: project_name
+  number_envs: 4
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message = FALSE)
+```
+
+### Load packages
+```{r}
+library(qiime2R); library(dplyr); library(stringr); library(skimr);
+library(DataExplorer); library(tidyr); library(tibble); library(pheatmap)
+library(ggplot2); library(MicroNiche); library(RColorBrewer); library(here)
+library(readr)
+```
+
+### Load and clean files
+```{r}
+taxonomy <- as.data.frame(parse_taxonomy(read_qza(here::here(params$project,
+                                "training",
+                                "taxonomy.qza"))$data))
+
+taxonomy_qza <- rownames_to_column(taxonomy, var="id") %>% tibble()
+
+table <- as.data.frame(read_qza(here::here(params$project,
+                             "output", "qza", "table.qza"))$data)
+
+table_qza <- rownames_to_column(table, var="id") %>% tibble()
+
+metadata <- readr::read_tsv(here::here(params$project,
+                                       "metadata.tsv")) %>%
+  janitor::clean_names() %>%
+  select(-linker_primer_sequence)
+```
+
+### Merge taxonomy files
+```{r}
+merged_files <- inner_join(taxonomy_qza, table_qza, by="id") %>%
+  select(-c("Kingdom", "Phylum", "Order", "Family", "Genus", "Class")) %>%
+  filter(!is.na(Species)) %>%
+  distinct(Species, .keep_all = T) %>%
+  select(-id)
+```
+
+### Compute Levins Bn
+```{r}
+tax <- merged_files %>%
+  rename(Taxon=Species) %>%
+  as.data.frame()
+
+levins <- levins.Bn(tax, params$number_envs,
+                    metadata$number_sample_id)
+
+levins_vector <- rownames_to_column(levins, var="species") %>% tibble() %>%
+  janitor::clean_names() %>%
+  filter(below_loq == "N" & p_adj<0.01) %>%
+  pull(species)
+```
+
+### Filter taxonomy file
+```{r}
+filtered_taxa <- merged_files %>%
+  filter(Species %in% levins_vector) %>%
+  column_to_rownames(var="Species")
+```
+
+### Render heatmap
+```{r}
+hm <- pheatmap(filtered_taxa,
+               cellheight = 9,
+               cellwidth = 50,
+               cluster_rows = F,
+               cutree_cols = 3,
+               scale = "row",
+               color=colorRampPalette(rev(brewer.pal(n = 6, name =
+  "RdYlBu")))(100),
+  angle_col = 45,
+  fontsize_row = 10)
+```
+
+### Save analyzed data
+Check heatmap width/height output params
+```{r}
+output_directory <- here::here(params$project, "processed_data")
+readr::write_tsv(merged_files,
+                 here::here(params$project,
+                 "processed_data",
+                 "full_species_counts.tsv"))
+readr::write_tsv(rownames_to_column(filtered_taxa, var="species"),
+                 here::here(params$project,
+                            "processed_data",
+                            "bn_filtered_counts.tsv"))
+readr::write_tsv(rownames_to_column(levins, var="species"),
+                 here::here(params$project,
+                            "processed_data",
+                            "levins_index.tsv"))
+ggsave(plot=hm, "heatmap.pdf", device="pdf",
+       path=output_directory, height=5, width = 7)
+ggsave(plot=hm, "heatmap_journal.eps", device="eps",
+       path=output_directory, height = 5, width = 7)
+```

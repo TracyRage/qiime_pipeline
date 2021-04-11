@@ -1,0 +1,8 @@
+#SampleID	BarcodeSequence	LinkerPrimerSequence	InputFileName	Domain	Type
+G2M	TAAGGCGACTAAGCCT		G2M.fq	bacteria	uncultured
+G3M	CGTACTAGCTAAGCCT		G3M.fq	bacteria	uncultured
+G5M	AGGCAGAACTAAGCCT		G5M.fq	bacteria	uncultured
+GPM	TCGACGTCTATCCTCT		GPM.fq	bacteria	uncultured
+G1	CCTAAGACTATCCTCT		G1.fq	bacteria	uncultured
+G2	CGATCAGTTATCCTCT		G2.fq	bacteria	uncultured
+G3	TGCAGCTATATCCTCT		G3.fq	bacteria	uncultured
