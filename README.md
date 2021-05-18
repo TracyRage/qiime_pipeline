@@ -51,7 +51,7 @@ touch labels.txt && usearch -fastx_getlabels YOUR_SAMPLE_NAME.fastq -output labe
     QIIME2 won’t see them. Please, see example files in `seqs/`.
 
 -   Rename sample, barcode and forward (R1) / reverse (R2) fields:
-    <sample>\_<barcode>*L001*{R1 or R2}\_001.fastq.gz
+    sample\_barcode\_*L001*{R1 or R2}\_001.fastq.gz
 
 -   If you done, please, delete example files.
 
