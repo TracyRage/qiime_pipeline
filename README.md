@@ -15,7 +15,7 @@ git clone https://github.com/TracyRage/qiime_pipeline.git
 Make all the `.sh` files executable
 
 ``` shell
-cmod +x *.sh 
+chmod +x *.sh 
 ```
 
 #### 2. Extract barcodes from raw sequences
