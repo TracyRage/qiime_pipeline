@@ -1,8 +1,23 @@
-#SampleID	BarcodeSequence	LinkerPrimerSequence	InputFileName	Domain	Type
-G2M	TAAGGCGACTAAGCCT		G2M.fq	bacteria	uncultured
-G3M	CGTACTAGCTAAGCCT		G3M.fq	bacteria	uncultured
-G5M	AGGCAGAACTAAGCCT		G5M.fq	bacteria	uncultured
-GPM	TCGACGTCTATCCTCT		GPM.fq	bacteria	uncultured
-G1	CCTAAGACTATCCTCT		G1.fq	bacteria	uncultured
-G2	CGATCAGTTATCCTCT		G2.fq	bacteria	uncultured
-G3	TGCAGCTATATCCTCT		G3.fq	bacteria	uncultured
+SampleID	BarcodeSequence	LinkerPrimerSequence	InputFileName	Domain	Type
+1AMP	TAGCGCTCGTAAGGAG		1AMP.fq	bacteria	uncultured
+1CIP	CGAGGCTGTCTCTCCG		1CIP.fq	bacteria	uncultured
+1CN	TAGGCATGCTAAGCCT		1CN.fq	bacteria	uncultured
+1C	TAAGGCGACTCTCTAT		1C.fq	bacteria	uncultured
+1IPM	GTAGAGGATTCTAGCT		1IPM.fq	bacteria	uncultured
+1LEV	GCTCATGACCTAGAGT		1LEV.fq	bacteria	uncultured
+1OC	GGACTCCTAAGGAGTA		1OC.fq	bacteria	uncultured
+1P	TCCTGAGCACTGCATA		1P.fq	bacteria	uncultured
+1SXT	ATCTCAGGGCGTAAGA		1SXT.fq	bacteria	uncultured
+1TE	CTCTCTACCGTCTAAT		1TE.fq	bacteria	uncultured
+1TOB 	AAGAGGCATCGACTAG		1TOB.fq	bacteria	uncultured
+2AMP	ACTCGCTACTATTAAG		2AMP.fq	bacteria	uncultured
+2C	CGTACTAGTATCCTCT		2C.fq	bacteria	uncultured
+2CIP	ATGCGCAGTATCCTCT		2CIP.fq	bacteria	uncultured
+2CN	CGGAGCCTTTATGCGA		2CN.fq	bacteria	uncultured
+2IPM	ACTGAGCGACTGCATA		2IPM.fq	bacteria	uncultured
+2LEV	CCTAAGACAAGGAGTA		2LEV.fq	bacteria	uncultured
+2OX	GCGTAGTAGAGCCTTA		2OX.fq	bacteria	uncultured
+2P	GGAGCTACAAGGCTAT		2P.fq	bacteria	uncultured
+2SXT	CGATCAGTCTAAGCCT		2SXT.fq	bacteria	uncultured
+2TE	TACGCTGCCTCTCTAT		2TE.fq	bacteria	uncultured
+2TOB	TAGCGCTCGTAAGGAG		2TOB	bacteria	uncultured

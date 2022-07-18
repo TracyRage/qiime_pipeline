@@ -5,9 +5,9 @@ set -u
 set -o pipefail
 
 # Sampling depth (sample with minimum count number; see feature-table.qzv)
-SAMPLING_DEPTH=8311
+SAMPLING_DEPTH=1
 # Median count frequency (median count number; see feature-table.qzv)
-MEDIAN=12705
+MEDIAN=144
 
 # DO NOT MODIFY VARIABLES BELOW
 # Path to table.qza
