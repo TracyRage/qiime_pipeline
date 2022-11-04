@@ -1,0 +1,347 @@
+---
+title: "Generic 16S analysis"
+---
+
+```{r}
+pacman::p_load("mia", "miaViz", "tidyverse", "DECIPHER",
+               "phangorn", "fido", "tidySummarizedExperiment",
+               "ALDEx2", "Maaslin2", "ANCOMBC", "MicrobiomeStat")
+```
+
+### Load data
+```{r}
+tse <- loadFromQIIME2(
+  featureTableFile = "output/qza/table.qza",
+  taxonomyTableFile = "training/taxonomy.qza",
+  sampleMetaFile = "metadata.tsv",
+  refSeqFile = "output/qza/rep-seqs.qza",
+  phyTreeFile = "output/qza/rooted-tree.qza"
+) 
+
+```
+
+### Separate volcanoes
+```{r}
+tse_boz <- tse[rowSums(assay(tse, "counts")) > 0,
+               tse$SampleID %in% c("B1-C", "B2-C",
+                                       "B3-C", "B4-C",
+                                       "B5-C", "BM-C", "HM-C")]
+
+tse_hasag <- tse[rowSums(assay(tse, "counts")) > 0,
+                 tse$SampleID %in% c("H1-C", "H2-C",
+                                       "H3-C", "H4-C",
+                                       "H5-C", "HM-C", "BM-C") ]
+
+```
+
+#### DAA (tree-based w/ fido)
+```{r}
+cov_names <- c("location", "sediment", "type")
+tse_genus <- agglomerateByRank(tse, "Genus")
+
+Y <- assays(tse_genus)$counts |> as.data.frame() |>
+  rownames_to_column("Genus") |> tibble() %>% 
+  filter(str_detect(Genus, "g__")) %>% 
+  mutate(Genus = str_remove(Genus, "^.*g__")) %>% 
+  column_to_rownames("Genus")
+
+Y <- Y[rowSums(Y) > 300,] |> as.matrix()
+
+sample_data<-as.data.frame(colData(tse_genus)[,cov_names])
+
+X <- t(model.matrix(~type+location+sediment,data=sample_data))
+
+n_taxa<-nrow(Y)
+upsilon <- n_taxa+3
+Omega <- diag(n_taxa)
+G <- cbind(diag(n_taxa-1), -1)
+Xi <- (upsilon-n_taxa)*G%*%Omega%*%t(G)
+Theta <- matrix(0, n_taxa-1, nrow(X))
+Gamma <- diag(nrow(X))
+
+priors <- pibble(NULL, X, upsilon, Theta, Gamma, Xi)
+names_covariates(priors) <- rownames(X)
+
+priors$Y <- Y 
+posterior <- refit(priors, optim_method="adam", multDirichletBoot=0.5) # ,, calcGradHess=FALSE
+
+
+names_categories(posterior) <- rownames(Y)
+posterior_summary <- summary(posterior, pars="Lambda")$Lambda
+
+focus_tab <- posterior_summary %>% 
+  filter(covariate != "(Intercept)") %>% 
+  filter(sign(p2.5) == sign(p97.5))
+
+write_csv(focus_tab %>% select(coord, covariate, mean,
+                               p2.5, p97.5) %>% 
+            arrange(covariate, mean), "down_analysis/fido_output.csv")
+
+f_cov <- focus_tab %>% count(covariate, sort=T) %>% pull(covariate)
+
+
+focus <- unique(focus_tab$coord)
+
+plot(posterior,par="Lambda", focus.coord = focus, focus.cov=f_cov)
+
+
+```
+
+```{r}
+svg("down_analysis/bayes_plot.svg", width = 10)
+plot(posterior,par="Lambda", focus.coord = focus, focus.cov=f_cov)
+dev.off()
+```
+
+
+
+### Do not forget to render FIDO image !!!!
+
+#### DAA (ALDEx2, Maaslin2, ANCOMBC)
+##### Filter by prevalence 10%
+```{r}
+tse_boz <- subsetByPrevalentTaxa(tse_boz, detection=0, prevalence=0.1)
+tse_hasag <- subsetByPrevalentTaxa(tse_hasag, detection=0, prevalence=0.1)
+```
+
+#### Perform ALDE (boz | hasag V soil)
+```{r}
+set.seed(1)
+
+
+get_effect <- function(matrix) {
+  X <- aldex.clr(reads = assay(matrix),
+               conds = colData(matrix)$sediment,
+               mc.samples = 128,
+               denom = "all",
+               verbose = F)
+  x_tt <- aldex.ttest(X, paired.test = F, verbose = F)
+  x_effect <- aldex.effect(X, CI = TRUE, verbose = FALSE)
+  
+  x_effect |> filter(overlap < 0.01)
+}
+
+effect_hasag <- get_effect(tse_hasag) %>% rownames_to_column("hash")
+effect_boz <- get_effect(tse_boz) %>% rownames_to_column("hash")
+
+genus <- as.data.frame(rowData(tse)) %>% rownames_to_column("hash") %>% 
+  select(hash, Genus) %>% drop_na()
+
+annotated_effect_boz <- inner_join(genus, effect_boz, by="hash") %>% 
+  select(hash, Genus, effect, overlap)
+
+annotated_effect_hasag <- inner_join(genus, effect_hasag, by="hash") %>% 
+  select(hash, Genus, effect, overlap)
+
+
+```
+
+### Perform ANCOM-BC
+```{r}
+
+boz_phyloseq <- makePhyloseqFromTreeSummarizedExperiment(tse_boz)
+hasag_phyloseq <- makePhyloseqFromTreeSummarizedExperiment(tse_hasag)
+
+get_ancom <- function(phyloseq_table) {
+  ancom <- ancombc(
+  phyloseq_table,
+  formula = "sediment",
+  p_adj_method = "fdr",
+  prv_cut = 0,
+  lib_cut = 0,
+  group = "sediment",
+  struc_zero = TRUE,
+  neg_lb = TRUE,
+  tol = 1e-5,
+  max_iter = 100,
+  conserve = TRUE,
+  alpha = 0.05,
+  global = TRUE)
+  ancom$res$diff_abn %>% rownames_to_column("hash") 
+}
+
+ancom_boz <- get_ancom(boz_phyloseq) 
+annot_ancom_boz <- inner_join(genus, ancom_boz, by="hash") %>% 
+  filter(sedimentsoil == "TRUE")
+
+ancom_hasag <- get_ancom(hasag_phyloseq)
+annot_ancom_hasag <- inner_join(genus, ancom_hasag, by="hash") %>% 
+    filter(sedimentsoil == "TRUE")
+
+
+```
+
+### MaAsLin2
+```{r}
+maslin_boz <- t(assay(tse_boz))
+maslin_hasag <- t(assay(tse_hasag))
+
+meta_boz <- data.frame(colData(tse_boz))
+meta_hasag <- data.frame(colData(tse_hasag))
+
+fit_maslin <- function(matrix, metadata) {
+  result <- Maaslin2(
+  matrix,
+  metadata,
+  output = "DAA exmaple",
+  transform = "AST",
+  fixed_effects = "sediment",
+  # reference = "sediment, soil",
+  normalization = "TSS",
+  standardize = F,
+  min_prevalence = 0)
+  filter(result$results, qval <= 0.05) %>% 
+    rename(hash=feature)
+}
+
+fit_maslin_boz <- fit_maslin(maslin_boz, meta_boz)
+annot_maslin_boz <- inner_join(genus, fit_maslin_boz, by="hash") %>% 
+  select(hash, Genus, qval)
+
+fit_maslin_hasag <- fit_maslin(maslin_hasag, meta_hasag)
+annot_maslin_hasag <- inner_join(genus, fit_maslin_hasag, by="hash") %>% 
+  select(hash, Genus, qval)
+
+### Microvirga PAH-degrading
+```
+
+### LinDA
+```{r}
+asv_boz <- as.data.frame(assay(tse_boz))
+asv_hasag <- as.data.frame(assay(tse_boz))
+
+
+get_linda <- function(matrix, metadata) {
+  r1 <- linda(matrix, metadata %>% select(sediment),
+            formula = "~sediment",
+            alpha = 0.05,
+            prev.filter = 0,
+            mean.abund.filter = 0)
+  as.data.frame(r1$output) %>% rownames_to_column("hash")
+  
+}
+
+linda_boz <- get_linda(asv_boz, meta_boz)
+annot_linda_boz <- inner_join(genus, linda_boz, by="hash") %>% 
+  filter(sedimentsoil.reject == "TRUE") %>% 
+  select(hash, Genus, sedimentsoil.reject)
+
+
+linda_hasag <- get_linda(asv_hasag, meta_hasag) 
+annot_linda_hasag <- inner_join(genus, linda_hasag, by="hash") %>% 
+  filter(sedimentsoil.reject == "TRUE")  %>% 
+  select(hash, Genus, sedimentsoil.reject)
+```
+
+
+### Centralize DAA (BOZ)
+```{r}
+annotated_effect_boz_2 <- annotated_effect_boz %>% 
+  select(hash, Genus) %>% 
+  mutate(reject = "TRUE", type="ALDEx2") %>% 
+  mutate(Genus = str_remove(Genus, "g__"))
+
+
+annot_ancom_boz_2 <- annot_ancom_boz %>% 
+  rename(reject = sedimentsoil) %>% 
+  select(hash, Genus, reject) %>% 
+  mutate(Genus = str_remove(Genus, "g__"),
+         type = "ANCOM-BC") %>% 
+  distinct(Genus, .keep_all = T) 
+
+
+annot_maslin_boz_2 <- annot_maslin_boz %>% 
+  mutate(Genus = str_remove(Genus, "g__")) %>% 
+  mutate(reject = "TRUE", type="Maslin2") %>% 
+  select(-qval)
+
+annot_linda_boz_2 <- annot_linda_boz %>% 
+  mutate(Genus = str_remove(Genus, "g__")) %>% 
+  mutate(reject = "TRUE", type="LinDA") %>% 
+  select(-sedimentsoil.reject)
+
+boz_daa_summary <- tibble(
+  ALDEx2 = annotated_effect_boz_2 %>% count(reject),
+  ANCOM = annot_ancom_boz_2 %>% count(reject),
+  Maaslin2 = annot_maslin_boz_2 %>% count(reject),
+  LinDA = annot_linda_boz_2 %>% count(reject),
+)
+
+boz_summarized <- rbind(annotated_effect_boz_2,
+                          annot_ancom_boz_2,
+                          annot_maslin_boz_2,
+                          annot_linda_boz_2)
+
+boz_count <- boz_summarized %>% group_by(type) %>% 
+  summarise(n=n())
+
+write_csv(boz_summarized, "down_analysis/boz_daa.csv")
+write_csv(boz_count, "down_analysis/boz_daa_count.csv")
+  
+  
+```
+
+### Centralize DAA (HASAG)
+```{r}
+annotated_effect_hasag_2 <- annotated_effect_hasag %>% 
+  select(hash, Genus) %>% 
+  mutate(reject = "TRUE", type="ALDEx2") %>% 
+  mutate(Genus = str_remove(Genus, "g__"))
+
+
+annot_ancom_hasag_2 <- annot_ancom_hasag %>% 
+  rename(reject = sedimentsoil) %>% 
+  select(hash, Genus, reject) %>% 
+  mutate(Genus = str_remove(Genus, "g__"),
+         type = "ANCOM-BC") %>% 
+  distinct(Genus, .keep_all = T) 
+
+
+annot_maslin_hasag_2 <- annot_maslin_hasag %>% 
+  mutate(Genus = str_remove(Genus, "g__")) %>% 
+  mutate(reject = "TRUE", type="Maslin2") %>% 
+  select(-qval)
+
+annot_linda_hasag_2 <- annot_linda_hasag %>% 
+  mutate(Genus = str_remove(Genus, "g__")) %>% 
+  mutate(reject = "TRUE", type="LinDA") %>% 
+  select(-sedimentsoil.reject)
+
+hasag_summarized <- rbind(annotated_effect_hasag_2,
+                          annot_ancom_hasag_2,
+                          annot_maslin_hasag_2,
+                          annot_linda_hasag_2)
+
+hasag_count <- hasag_summarized %>% group_by(type) %>% 
+  summarise(n=n())
+
+write_csv(hasag_summarized, "down_analysis/hasag_daa.csv")
+write_csv(hasag_count, "down_analysis/hasag_daa_count.csv")
+```
+
+
+```{r}
+total_mud <- inner_join(hasag_summarized, boz_summarized)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

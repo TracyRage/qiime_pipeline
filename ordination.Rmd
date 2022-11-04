@@ -1,0 +1,180 @@
+---
+title: "R Notebook"
+---
+### Load packages
+```{r}
+pacman::p_load("mia", "miaViz", "tidyverse",
+               "tidySummarizedExperiment", "vegan",
+               "ggrepel", "ape", "ggtree")
+```
+### Load data
+```{r}
+tse <- loadFromQIIME2(
+  featureTableFile = "output/qza/table.qza",
+  taxonomyTableFile = "training/taxonomy.qza",
+  sampleMetaFile = "metadata.tsv",
+  refSeqFile = "output/qza/rep-seqs.qza",
+  phyTreeFile = "output/qza/rooted-tree.qza"
+) 
+
+tse_phylum <- agglomerateByRank(tse, rank = "Phylum")
+tse_phylum <- tse_phylum[rownames(assay(tse_phylum, "counts")) != "NA_NA" ,]
+```
+
+```{r}
+nmds.stress <- function(x, sim = 100, kmax=4) {
+  sapply(seq_len(kmax), function(k) {
+    replicate(sim, metaMDS(x, k=k, autotransform = T)$stress)
+  })
+}
+
+stress <- nmds.stress(t(assay(tse_phylum, "counts")), sim=100)
+
+dfstr <- reshape2::melt(stress, varnames = c("replicate", "dimensions"))
+
+ggplot(dfstr, aes(y=value, x=dimensions, group=dimensions)) +
+  geom_boxplot()
+
+nmdsk2 <- metaMDS(t(assay(tse_phylum, "counts")), k=2, autotransform = T)
+
+stressplot(nmdsk2, pch=20)
+
+colnames(nmdsk2$points) <- paste0("NmMDS", 1:2) 
+nmdsk2_annot <- as.data.frame(nmdsk2$points) %>% rownames_to_column("SampleID") 
+nmdsk_meta <- as.data.frame(colData(tse)[, c("sediment", "type", "location")]) %>% 
+  rownames_to_column("SampleID")
+nmdsk2_annot <- left_join(nmdsk2_annot, nmdsk_meta, by="SampleID") 
+
+nmdsk3 <- nmdsk2_annot %>% mutate(group = case_when(
+  location %in% c("surfb", "surfh") ~ "surface",
+  location %in% c("outerh", "outerb") ~ "outer",
+  TRUE ~ "inner"
+))
+
+nmds_plot <- ggplot(nmdsk3, aes(x=NmMDS1, y=NmMDS2, color=group)) +
+  geom_point(aes(shape = type), size=4) +
+  geom_text_repel(aes(label=location), col = "black") +
+  stat_ellipse(geom="polygon", aes(fill=group), alpha=0.3, linetype=2) +
+  coord_fixed() 
+
+ggsave("down_analysis/NMDS_plot.eps", plot = nmds_plot, dpi=600)
+ggsave("down_analysis/NMDS_plot.jpeg", plot = nmds_plot, dpi=600)
+
+```
+
+### Heatmap
+```{r}
+tse_order <- agglomerateByRank(tse, "Order", onRankOnly=T)
+tse_order <- transformSamples(tse_order, method="relabundance", 
+                              pseudocount = 1)
+
+tse_order <- transformSamples(tse_order, method="clr", 
+                              abund_values = "relabundance")
+
+tse_order <- transformFeatures(tse_order, abund_values = "clr",
+                               method = "z", name = "clr_z")
+
+top_taxa <- getTopTaxa(tse_order, top=30)
+tse_order_subset <- tse_order[top_taxa,] 
+
+mat_assay <- as.data.frame(assay(tse_order_subset, "clr_z")) %>% as.matrix()
+
+pheatmap::pheatmap(mat_assay)
+
+
+```
+
+### CLustering
+```{r}
+### row Clustering
+taxa_hclust <- hclust(dist(mat_assay), method = "complete")
+
+taxa_tree <- as.phylo(taxa_hclust)
+
+taxa_tree <- ggtree(taxa_tree) + 
+  theme(plot.margin=margin(0,0,0,0))
+
+taxa_ordered <- get_taxa_name(taxa_tree)
+
+taxa_clusters <- cutree(tree = taxa_hclust, k = 3)
+
+taxa_clusters <- data.frame(clusters = taxa_clusters)
+taxa_clusters$clusters <- factor(taxa_clusters$clusters)
+taxa_clusters <- taxa_clusters[taxa_ordered, , drop = FALSE] 
+
+rowData(tse_order_subset)$clusters <- taxa_clusters[order(match(rownames(taxa_clusters), 
+                                                                 rownames(tse_order_subset))), ]
+
+### col Clustering
+sample_hclust <- hclust(dist(t(mat_assay)), method = "centroid")
+sample_tree <- as.phylo(sample_hclust)
+
+sample_tree <- ggtree(sample_tree) + layout_dendrogram() + 
+  theme(plot.margin=margin(0,0,0,0))
+
+samples_ordered <- rev(get_taxa_name(sample_tree))
+
+sample_clusters <- factor(cutree(tree = sample_hclust, k = 2))
+
+sample_data <- data.frame(clusters = sample_clusters)
+
+sample_data <- sample_data[samples_ordered, , drop = FALSE] 
+
+tse_order_subset <- tse_order_subset[ , rownames(sample_data)]
+
+sample_data$sample_types <- colData(tse_order_subset)$sediment
+
+
+### Clean taxa
+rownames(mat_assay) <- modify(rownames(mat_assay), ~str_remove(.x, "o__"))
+rownames(taxa_clusters) <- modify(rownames(taxa_clusters), ~str_remove(.x, "o__"))
+
+breaks <- seq(-ceiling(max(abs(mat_assay))), ceiling(max(abs(mat_assay))), 
+              length.out = ifelse( max(abs(mat_assay))>5, 2*ceiling(max(abs(mat_assay))), 10 ) )
+colors <- colorRampPalette(c("darkblue", "blue", "white", "red", "darkred"))(length(breaks)-1)
+
+ph <- pheatmap::pheatmap(mat_assay,
+                         annotation_row = taxa_clusters,
+                        annotation_col = sample_data,
+         breaks = breaks,
+         color = colors)
+
+
+
+
+
+
+```
+
+
+```{r}
+svg("down_analysis/heatmap.svg", height = 10, width = 8)
+ph
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,177 @@
+---
+title: "R Notebook"
+---
+
+```{r}
+pacman::p_load("mia", "miaViz", "tidyverse",
+               "tidySummarizedExperiment", "vegan",
+               "ggrepel", "ape", "ggtree", "genefilter",
+               "PMA", "factoextra", "phyloseq", ade4, patchwork,
+               scater)
+```
+
+```{r}
+tse <- loadFromQIIME2(
+  featureTableFile = "output/qza/table.qza",
+  taxonomyTableFile = "training/taxonomy.qza",
+  sampleMetaFile = "metadata.tsv",
+  refSeqFile = "output/qza/rep-seqs.qza",
+  phyTreeFile = "output/qza/rooted-tree.qza"
+) 
+
+load("~/exp/R/biostatistics/data/microbe.rda")
+metab <- read.csv("~/exp/R/biostatistics/data/metabolites.csv",
+                  row.names = 1) |> as.matrix()
+
+taxa_genus <- agglomerateByRank(tse, "Genus", onRankOnly=T)
+
+
+```
+
+
+```{r}
+phyloseq_data <- makePhyloseqFromTreeSummarizedExperiment(taxa_genus)
+
+metabolites_df <- colData(tse) |> as.data.frame() |>
+  select(pH, EC, salinity) %>% as.matrix() %>% t() 
+
+microbe <- prune_taxa(taxa_sums(phyloseq_data) > 4, phyloseq_data)
+microbe <- filter_taxa(microbe, filterfun(kOverA(3,2)), TRUE)
+metab_scaled <- log(1 + metabolites_df, base = 10)
+
+X <- log(1 + as.matrix(otu_table(microbe)), base = 10)
+rownames(X) <- modify(rownames(X), ~str_remove(.x, "g__"))
+
+
+pca1 <- dudi.pca(t(metab_scaled), scale = T, scann = F)
+pca2 <- dudi.pca(t(X), scale = T, scann = F)
+
+rv1 <- RV.rtest(pca1$tab, pca2$tab)
+
+ccaRes = CCA(t(X), t(metab_scaled), penaltyx = 0.15, penaltyz = 0.15, 
+   typex = "standard", typez = "standard")
+
+combined <- cbind(t(X[ccaRes$u != 0,]),
+                  as.data.frame(metab_scaled[ccaRes$v != 0,])) %>% 
+  as.data.frame() %>% rename(pH = `metab_scaled[ccaRes$v != 0, ]`)
+
+
+pca_res <- dudi.pca(combined, scannf = F, nf = 3)
+
+sample_info <- rownames_to_column(as.data.frame(pca_res$li), "sample_type") %>% 
+  mutate(group = case_when(sample_type %in% c("HM-C", "BM-C") ~ "soil",
+                           sample_type %in% c("B1-C", "H1-C") ~ "surface",
+                           TRUE ~ "inner"))
+
+feature_info <- rownames_to_column(as.data.frame(pca_res$c1), "feature_type")
+
+cca_plot <- ggplot() + geom_point(data = sample_info,
+                      aes(x=Axis1, y=Axis2, col=sample_type), size=3) +
+  stat_ellipse(data = sample_info, aes(x=Axis1, y=Axis2, fill=group), geom="polygon", alpha=0.3, linetype=2) +
+  geom_label_repel(data = feature_info,
+                   aes(x=5.5*CS1, y=5.5*CS2, label=feature_type,
+                       fill = feature_type), size=4, segment.size=0.3,
+                   label.padding = unit(0.1, "lines"), label.size = 0) +
+  geom_point(data = feature_info,
+             aes(x=5.5*CS1, y=5.5*CS2, fill=feature_type),
+             size=2, shape=23, col="#383838") +
+  scale_color_brewer(palette = "Paired") +
+ guides(fill = guide_legend(override.aes = list(shape = 32, size = 0))) +
+ coord_fixed(sqrt(pca_res$eig[2] / pca_res$eig[2])) +
+ labs(x = sprintf("Axis1 [%s%% Variance]",
+ 100 * round(pca_res$eig[1] / sum(pca_res$eig), 2)),
+ y = sprintf("Axis2 [%s%% Variance]",
+ 100 * round(pca_res$eig[2] / sum(pca_res$eig), 2)),
+ fill = "Feature Type", col = "Sample Type") 
+
+
+
+```
+
+
+```{r}
+png("down_analysis/ordination_full.png", width = 900, height = 1000)
+nmds_plot / cca_plot
+dev.off()
+```
+
+```{r}
+svg("down_analysis/ordination_full.svg", width=10, height = 13)
+nmds_plot / cca_plot
+dev.off()
+```
+
+```{r}
+### Richness
+tse <- mia::estimateRichness(tse, 
+                             assay_name = "counts", 
+                             index = "observed", 
+                             name="observed")
+
+### Shannon index
+tse <- mia::estimateDiversity(tse, 
+                              assay_name = "counts",
+                              index = "shannon", 
+                              name = "shannon")
+
+### Faith phylogenetic diversity
+tse <- mia::estimateFaith(tse,
+                          assay_name = "counts")
+
+### Evenness
+tse <- estimateEvenness(tse, 
+                        abund_values = "counts", 
+                        index="simpson")
+
+### Dominance
+tse <- estimateDominance(tse, 
+                         assay_name = "counts", 
+                         index="relative")
+
+### Rarity
+tse <- mia::estimateDiversity(tse, 
+                              assay_name = "counts",
+                              index = "log_modulo_skewness")
+
+### Divergence
+tse <- mia::estimateDivergence(tse,
+                               assay_name = "counts",
+                               reference = "median",
+                               FUN = vegan::vegdist)
+
+
+analysis_types <- c("observed", "shannon", "simpson", 
+                    "relative", "faith", "log_modulo_skewness")
+
+plots <- lapply(analysis_types, plotColData, object=tse,
+                x = "sediment", colour_by= "sediment" )
+
+plots <- lapply(plots, "+", 
+                theme(axis.text.x = element_blank(),
+                      axis.title.x = element_blank(),
+                      axis.ticks.x = element_blank()))
+
+```
+
+
+```{r}
+svg("down_analysis/alpha_diversity.svg")
+
+((plots[[1]] | plots[[2]] | plots[[3]]) / 
+(plots[[4]] | plots[[5]] | plots[[6]])) +
+  plot_layout(guides = "collect")
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
